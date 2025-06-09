@@ -13,7 +13,7 @@ from plotly.subplots import make_subplots
 
 # ------------------ Configuration ------------------ #
 
-api_key = st.secrets.get("GOOGLE_GENAI_API_KEY") or os.getenv("GOOGLE_GENAI_API_KEY")
+api_key ="AIzaSyB5Jw-XclWu8jlQdvP83QTkL1Z89P72QSE"
 
 
 
