@@ -13,8 +13,7 @@ from plotly.subplots import make_subplots
 
 # ------------------ Configuration ------------------ #
 
-api_key ="AIzaSyB5Jw-XclWu8jlQdvP83QTkL1Z89P72QSE"
-
+genai.configure(api_key="AIzaSyB5Jw-XclWu8jlQdvP83QTkL1Z89P72QSE")
 
 
 # Initialize the model
