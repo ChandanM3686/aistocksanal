@@ -325,7 +325,7 @@ def analyze_stock_with_gemini(stock_data: dict, stock_name: str) -> str:
         profit_loss = current_value - invested_value
         profit_loss_percent = (profit_loss / invested_value * 100) if invested_value > 0 else 0
         
-      prompt = f"""
+    prompt = f"""
 You are a stock analysis expert.
 
 Analyze the following stock based only on the data provided below. Give clear and concise bullet-point insights. Do not ask for missing data. If something is missing, skip or make a reasonable assumption.
@@ -359,6 +359,7 @@ Output Format:
 
 response = model.generate_content(prompt)
 return response.text
+
 
 
 def main():
