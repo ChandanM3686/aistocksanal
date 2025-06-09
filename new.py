@@ -326,65 +326,41 @@ def analyze_stock_with_gemini(stock_data: dict, stock_name: str) -> str:
         profit_loss = current_value - invested_value
         profit_loss_percent = (profit_loss / invested_value * 100) if invested_value > 0 else 0
         
-        prompt = f"""
-        Analyze {stock_name} (ticker: {ticker_symbol}) based on:
+      prompt = f"""
+You are a stock analysis expert.
 
-        • Basic Data:
-          - Quantity: {stock_data.get('Quantity')}
-          - Avg Price: ₹{stock_data.get('Avg. Price')}
-          - LTP: ₹{stock_data.get('LTP')}
-          - Invested: ₹{invested_value}
-          - Current: ₹{current_value}
-          - P/L: ₹{profit_loss:.2f}
-          - P/L %: {profit_loss_percent:.2f}%
-          - Today's P/L: {stock_data.get('Todays Profit/Loss')}
-          - Today's P/L %: {stock_data.get('Todays Profit/Loss %')}
+Analyze the following stock based only on the data provided below. Give clear and concise bullet-point insights. Do not ask for missing data. If something is missing, skip or make a reasonable assumption.
 
-        • Latest News Impact:
-          - List 3 most significant recent news items
-          - Direct impact on stock price (positive/negative/neutral)
+Stock: {stock_name} ({ticker_symbol})
 
-        • Key Metrics:
-          - P/E ratio vs industry average
-          - Debt-to-Equity ratio
-          - ROE (>15% is good)
-          - Free Cash Flow trend
-          - Dividend yield
+• Quantity: {stock_data.get('Quantity')}
+• Avg Price: ₹{stock_data.get('Avg. Price')}
+• LTP: ₹{stock_data.get('LTP')}
+• Invested Value: ₹{invested_value}
+• Current Value: ₹{current_value}
+• P/L: ₹{profit_loss:.2f}
+• P/L %: {profit_loss_percent:.2f}%
+• Today's P/L: ₹{stock_data.get('Todays Profit/Loss')}
+• Today's P/L %: {stock_data.get('Todays Profit/Loss %')}
 
-        • Technical Indicators:
-          - Support/Resistance levels
-          - 50/200-day MA trend
-          - RSI reading
-          - MACD signal
-          - Volume trend
+Instructions:
+- Use only above data to analyze performance
+- Give 5–7 direct bullet points
+- Include a basic recommendation: Buy / Sell / Hold
+- Suggest short-term & long-term targets (1M, 3M, 1Y)
+- No explanations, only crisp bullet points
 
-        • Buffett Criteria (Rate 1-5):
-          - Business simplicity
-          - Economic moat strength
-          - Management quality
-          - Financial stability
-          - Margin of safety
-          - Long-term growth potential
+Output Format:
+- 📌 Bullet Point 1
+- 📌 Bullet Point 2
+...
+- ✅ Recommendation: Buy/Sell/Hold
+- 🎯 Targets: 1M - ₹___ | 3M - ₹___ | 1Y - ₹___
+"""
 
-        • Risk Assessment:
-          - Sector risks
-          - Competition threats
-          - Regulatory concerns
-          - Volatility level
+response = model.generate_content(prompt)
+return response.text
 
-        • Direct Recommendations:
-          - Buy/Sell/Hold with confidence level
-          - Target prices: 1M, 3M, 1Y
-          - Multibagger potential (Yes/No)
-          - Position sizing advice
-
-        Provide bullet points only. No explanations or theory. Just facts and direct recommendations.
-        If you don't have specific data for any section, provide reasonable estimates based on available information rather than stating 'no data available'.
-        """
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"Error analyzing stock: {str(e)}"
 
 def main():
     st.title("Stock Portfolio Analysis AI Agent")
