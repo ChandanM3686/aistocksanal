@@ -13,7 +13,9 @@ from plotly.subplots import make_subplots
 
 # ------------------ Configuration ------------------ #
 
+
 genai.configure(api_key="AIzaSyB5Jw-XclWu8jlQdvP83QTkL1Z89P72QSE")
+
 
 
 # Initialize the model
@@ -272,95 +274,121 @@ def calculate_buffett_metrics(ticker_symbol):
     except Exception as e:
         print(f"Error calculating Buffett metrics: {str(e)}")
         return {}
-        
-def analyze_stock(stock_name, ticker_symbol, stock_data, invested_value, current_value, profit_loss, profit_loss_percent, model):
+
+def summarize_report_with_gemini(full_report: str) -> str:
+    """
+    Use Google Gen AI to produce a concise summary of the full analysis.
+    """
     try:
         prompt = f"""
-You are a stock analysis expert.
+Please summarize the following detailed stock analysis into a concise report (around 100–150 words). Keep all key recommendations, outlooks, and risk highlights. Here is the full analysis:
 
-Analyze the following stock based only on the data provided below. Give clear and concise bullet-point insights. Do not ask for missing data. If something is missing, skip or make a reasonable assumption.
-
-Stock: {stock_name} ({ticker_symbol})
-
-• Quantity: {stock_data.get('Quantity')}
-• Avg Price: ₹{stock_data.get('Avg. Price')}
-• LTP: ₹{stock_data.get('LTP')}
-• Invested Value: ₹{invested_value}
-• Current Value: ₹{current_value}
-• P/L: ₹{profit_loss:.2f}
-• P/L %: {profit_loss_percent:.2f}%
-• Today's P/L: ₹{stock_data.get('Todays Profit/Loss')}
-• Today's P/L %: {stock_data.get('Todays Profit/Loss %')}
-
-Instructions:
-- Use only above data to analyze performance
-- Give 5–7 direct bullet points
-- Include a basic recommendation: Buy / Sell / Hold
-- Suggest short-term & long-term targets (1M, 3M, 1Y)
-- No explanations, only crisp bullet points
-
-Output Format:
-- 📌 Bullet Point 1
-- 📌 Bullet Point 2
-...
-- ✅ Recommendation: Buy/Sell/Hold
-- 🎯 Targets: 1M - ₹___ | 3M - ₹___ | 1Y - ₹___
+{full_report}
 """
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"Error analyzing stock: {str(e)}"
+        return f"Error summarizing report: {str(e)}"
 
-# Add this function before the main() function
+def send_email(recipient: str, subject: str, body: str) -> bool:
+    """
+    Sends an email using SMTP. Returns True on success, False on failure.
+    """
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = recipient
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        server = smtplib.SMTP(smtp_server, int(smtp_port))
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, recipient, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Error sending email: {str(e)}")
+        return False
 
 def analyze_stock_with_gemini(stock_data: dict, stock_name: str) -> str:
-    """Use Google Gen AI to generate a detailed analysis for the selected stock."""
+    """Use Google Gen AI to generate a professional analysis for the selected stock."""
     try:
-        # Format ticker symbol correctly for yfinance
+        # Format ticker symbol
         ticker_symbol = stock_name.strip()
         if not (ticker_symbol.endswith('.NS') or ticker_symbol.endswith('.BO')):
-            ticker_symbol = f"{ticker_symbol}.NS"  # Default to NSE
-        
-        # Calculate P/L and P/L % correctly
+            ticker_symbol = f"{ticker_symbol}.NS"
+
+        # P/L calculations
         invested_value = stock_data.get('Invested Value', 0)
         current_value = stock_data.get('Current Value', 0)
         profit_loss = current_value - invested_value
         profit_loss_percent = (profit_loss / invested_value * 100) if invested_value > 0 else 0
-        
-    prompt = f"""
-You are a stock analysis expert.
 
-Analyze the following stock based only on the data provided below. Give clear and concise bullet-point insights. Do not ask for missing data. If something is missing, skip or make a reasonable assumption.
+        # Construct professional and compact prompt
+        prompt = f"""
+        You are a professional equity analyst. Provide a structured analysis for stock: {stock_name} ({ticker_symbol}).
 
-Stock: {stock_name} ({ticker_symbol})
+        🔹 **Position Details**
+        - Quantity: {stock_data.get('Quantity')}
+        - Avg Buy Price: ₹{stock_data.get('Avg. Price')}
+        - Last Traded Price (LTP): ₹{stock_data.get('LTP')}
+        - Invested Value: ₹{invested_value}
+        - Current Value: ₹{current_value}
+        - Net P/L: ₹{profit_loss:.2f} ({profit_loss_percent:.2f}%)
+        - Today’s P/L: {stock_data.get('Todays Profit/Loss')} ({stock_data.get('Todays Profit/Loss %')})
 
-• Quantity: {stock_data.get('Quantity')}
-• Avg Price: ₹{stock_data.get('Avg. Price')}
-• LTP: ₹{stock_data.get('LTP')}
-• Invested Value: ₹{invested_value}
-• Current Value: ₹{current_value}
-• P/L: ₹{profit_loss:.2f}
-• P/L %: {profit_loss_percent:.2f}%
-• Today's P/L: ₹{stock_data.get('Todays Profit/Loss')}
-• Today's P/L %: {stock_data.get('Todays Profit/Loss %')}
+        🔹 **Expert Recommendation**
+        - Buy / Sell / Hold recommendation
+        - Expert rating (out of 5)
+        - Target price for 1M, 3M, 1Y
+        - Suggested position sizing
 
-Instructions:
-- Use only above data to analyze performance
-- Give 5–7 direct bullet points
-- Include a basic recommendation: Buy / Sell / Hold
-- Suggest short-term & long-term targets (1M, 3M, 1Y)
-- No explanations, only crisp bullet points
+        🔹 **Latest News Impact (max 3)**
+        - Headline
+        - Brief summary
+        - Sentiment: Positive / Neutral / Negative
 
-Output Format:
-- 📌 Bullet Point 1
-- 📌 Bullet Point 2
-...
-- ✅ Recommendation: Buy/Sell/Hold
-- 🎯 Targets: 1M - ₹___ | 3M - ₹___ | 1Y - ₹___
-"""
+        🔹 **Key Financial Indicators**
+        - P/E Ratio (vs Industry)
+        - Debt-to-Equity Ratio
+        - Return on Equity (ROE)
+        - Free Cash Flow trend (last 3 years)
+        - Dividend Yield
+        - EPS Growth (YoY)
 
-response = model.generate_content(prompt)
-return response.text
+        🔹 **Technical Indicators**
+        - Support & Resistance levels
+        - 50 / 200-day Moving Averages
+        - RSI value (indicate overbought/oversold)
+        - MACD signal
+        - Volume trend
+
+        🔹 **Buffett Checklist (Rate 1–5)**
+        - Simple business model
+        - Economic moat
+        - Strong management
+        - Consistent earnings
+        - Conservative debt
+        - Long-term growth visibility
+        - Valuation margin of safety
+
+        🔹 **Risk Overview**
+        - Sector-related risks
+        - Regulatory threats
+        - Competitive intensity
+        - Volatility/Price risk
+
+        🔹 **Multibagger Potential**
+        - Yes / No with justification
+
+        🔸 Bullet points only. Avoid theory. Give crisp, data-backed insights only.
+        """
+        response = model.generate_content(prompt)
+        return response.text
+
+    except Exception as e:
+        return f"Error analyzing stock: {str(e)}"
 
 
 
