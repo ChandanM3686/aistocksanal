@@ -272,42 +272,44 @@ def calculate_buffett_metrics(ticker_symbol):
     except Exception as e:
         print(f"Error calculating Buffett metrics: {str(e)}")
         return {}
-
-def summarize_report_with_gemini(full_report: str) -> str:
-    """
-    Use Google Gen AI to produce a concise summary of the full analysis.
-    """
+        
+def analyze_stock(stock_name, ticker_symbol, stock_data, invested_value, current_value, profit_loss, profit_loss_percent, model):
     try:
         prompt = f"""
-Please summarize the following detailed stock analysis into a concise report (around 100–150 words). Keep all key recommendations, outlooks, and risk highlights. Here is the full analysis:
+You are a stock analysis expert.
 
-{full_report}
+Analyze the following stock based only on the data provided below. Give clear and concise bullet-point insights. Do not ask for missing data. If something is missing, skip or make a reasonable assumption.
+
+Stock: {stock_name} ({ticker_symbol})
+
+• Quantity: {stock_data.get('Quantity')}
+• Avg Price: ₹{stock_data.get('Avg. Price')}
+• LTP: ₹{stock_data.get('LTP')}
+• Invested Value: ₹{invested_value}
+• Current Value: ₹{current_value}
+• P/L: ₹{profit_loss:.2f}
+• P/L %: {profit_loss_percent:.2f}%
+• Today's P/L: ₹{stock_data.get('Todays Profit/Loss')}
+• Today's P/L %: {stock_data.get('Todays Profit/Loss %')}
+
+Instructions:
+- Use only above data to analyze performance
+- Give 5–7 direct bullet points
+- Include a basic recommendation: Buy / Sell / Hold
+- Suggest short-term & long-term targets (1M, 3M, 1Y)
+- No explanations, only crisp bullet points
+
+Output Format:
+- 📌 Bullet Point 1
+- 📌 Bullet Point 2
+...
+- ✅ Recommendation: Buy/Sell/Hold
+- 🎯 Targets: 1M - ₹___ | 3M - ₹___ | 1Y - ₹___
 """
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"Error summarizing report: {str(e)}"
-
-def send_email(recipient: str, subject: str, body: str) -> bool:
-    """
-    Sends an email using SMTP. Returns True on success, False on failure.
-    """
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = sender_email
-        msg["To"] = recipient
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
-
-        server = smtplib.SMTP(smtp_server, int(smtp_port))
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, recipient, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Error sending email: {str(e)}")
-        return False
+        return f"Error analyzing stock: {str(e)}"
 
 # Add this function before the main() function
 
