@@ -392,6 +392,157 @@ def analyze_stock_with_gemini(stock_data: dict, stock_name: str) -> str:
 
 
 
+# Move these functions before main()
+def fetch_live_prices_with_gemini(stock_symbols):
+    """
+    Use Gemini to fetch live prices for a list of stock symbols
+    """
+    try:
+        # Clean up stock symbols by removing trailing spaces
+        cleaned_symbols = [symbol.strip() for symbol in stock_symbols]
+        
+        # Add proper suffix for Indian stocks if not already present
+        formatted_symbols = []
+        for symbol in cleaned_symbols:
+            if not (symbol.endswith('.NS') or symbol.endswith('.BO')):
+                # Default to NSE for Indian stocks
+                formatted_symbol = f"{symbol.strip()}.NS"
+            else:
+                formatted_symbol = symbol.strip()
+            formatted_symbols.append(formatted_symbol)
+            
+        # Create a prompt for Gemini to fetch live prices
+        symbols_str = ", ".join(formatted_symbols)
+        prompt = f"""
+        Please provide the current live prices for the following stocks: {symbols_str}.
+        Return the data in this exact format - a JSON object where keys are stock symbols and values are their current prices:
+        {{"SYMBOL1": price1, "SYMBOL2": price2, ...}}
+        Only return the JSON object, nothing else.
+        """
+        
+        # Get response from Gemini
+        response = model.generate_content(prompt)
+        response_text = response.text
+        
+        # Extract the JSON object from the response
+        import json
+        import re
+        
+        # Try to find a JSON object in the response
+        json_match = re.search(r'\{[^\{\}]*\}', response_text)
+        if json_match:
+            json_str = json_match.group(0)
+            prices_dict = json.loads(json_str)
+            return prices_dict
+        else:
+            # If no JSON object is found, try to parse the entire response
+            try:
+                prices_dict = json.loads(response_text)
+                return prices_dict
+            except:
+                print("Could not parse Gemini response as JSON")
+                return {}
+    except Exception as e:
+        print(f"Error fetching live prices with Gemini: {str(e)}")
+        return {}
+
+# Modify the track_daily_profits function to use Gemini for live prices
+def track_daily_profits(df, days=30, use_gemini_for_live=True):
+    """Track daily profits for stocks in the portfolio with cumulative trend using Gemini for live prices"""
+    try:
+        # Create a dictionary to store results
+        tracking_data = {}
+        
+        # Get today's date and the date from 'days' days ago
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get list of stock symbols
+        stock_symbols = df['Name'].tolist()
+        
+        # Fetch live prices using Gemini if requested
+        live_prices = {}
+        if use_gemini_for_live:
+            live_prices = fetch_live_prices_with_gemini(stock_symbols)
+        
+        # Process each stock in the portfolio
+        for _, row in df.iterrows():
+            stock_name = row['Name']
+            avg_price = row['Avg. Price']
+            quantity = row['Quantity']
+            
+            # Format ticker symbol correctly for yfinance
+            ticker_symbol = stock_name.strip()
+            if not (ticker_symbol.endswith('.NS') or ticker_symbol.endswith('.BO')):
+                ticker_symbol = f"{ticker_symbol}.NS"  # Default to NSE
+            
+            try:
+                ticker = yf.Ticker(ticker_symbol)
+                hist = ticker.history(start=start_date, end=end_date)
+                
+                if not hist.empty:
+                    if use_gemini_for_live and stock_name in live_prices and live_prices[stock_name] is not None:
+                        if datetime.now().date() not in hist.index:
+                            last_row = hist.iloc[-1].copy()
+                            new_index = pd.DatetimeIndex([datetime.now()])
+                            new_row = pd.DataFrame([last_row], index=new_index)
+                            hist = pd.concat([hist, new_row])
+                        
+                        hist.loc[hist.index[-1], 'Close'] = live_prices[stock_name]
+                    
+                    hist['Daily_PL'] = (hist['Close'] - avg_price) * quantity
+                    hist['Daily_PL_Pct'] = ((hist['Close'] - avg_price) / avg_price) * 100
+                    
+                    hist['Month'] = hist.index.month
+                    hist['Year'] = hist.index.year
+                    hist['Monthly_Cumulative_PL'] = hist.groupby(['Year', 'Month'])['Daily_PL'].cumsum()
+                    
+                    tracking_data[stock_name] = {
+                        'dates': hist.index.tolist(),
+                        'close_prices': hist['Close'].tolist(),
+                        'daily_pl': hist['Daily_PL'].tolist(),
+                        'daily_pl_pct': hist['Daily_PL_Pct'].tolist(),
+                        'monthly_cumulative_pl': hist['Monthly_Cumulative_PL'].tolist(),
+                        'month': hist['Month'].tolist(),
+                        'year': hist['Year'].tolist(),
+                        'live_price': live_prices.get(stock_name, None) if use_gemini_for_live else None
+                    }
+            except Exception as e:
+                print(f"Error fetching data for {stock_name}: {str(e)}")
+                continue
+                
+        return tracking_data
+    except Exception as e:
+        print(f"Error in track_daily_profits: {str(e)}")
+        return {}
+
+def calculate_profit_loss_metrics(df):
+    """Calculate proper profit/loss metrics"""
+    try:
+        # Ensure numeric types
+        df['Invested Value'] = pd.to_numeric(df['Invested Value'], errors='coerce')
+        df['Current Value'] = pd.to_numeric(df['Current Value'], errors='coerce')
+        df['LTP'] = pd.to_numeric(df['LTP'], errors='coerce')
+        df['Avg. Price'] = pd.to_numeric(df['Avg. Price'], errors='coerce')
+        
+        # Calculate P/L
+        df['Profit/Loss'] = df['Current Value'] - df['Invested Value']
+        
+        # Calculate P/L % properly
+        df['Profit/Loss %'] = (df['Profit/Loss'] / df['Invested Value'] * 100).round(2)
+        
+        # Calculate today's P/L
+        df['Todays Profit/Loss'] = (df['LTP'] - df['Avg. Price']) * df['Quantity']
+        df['Todays Profit/Loss %'] = ((df['LTP'] - df['Avg. Price']) / df['Avg. Price'] * 100).round(2)
+        
+        # Replace inf and -inf with NaN
+        df = df.replace([np.inf, -np.inf], np.nan)
+        
+        return df
+    except Exception as e:
+        print(f"Error calculating P/L metrics: {str(e)}")
+        return df
+
 def main():
     st.title("Stock Portfolio Analysis AI Agent")
 
@@ -401,14 +552,17 @@ def main():
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
-
+            
+            # Convert numeric columns
             numeric_cols = [
-                "Quantity", "Avg. Price", "LTP", "Invested Value", "Current Value",
-                "Profit/Loss", "Profit/Loss %", "Todays Profit/Loss", "Todays Profit/Loss %"
+                "Quantity", "Avg. Price", "LTP", "Invested Value", "Current Value"
             ]
             for col in numeric_cols:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
+            
+            # Calculate proper P/L metrics
+            df = calculate_profit_loss_metrics(df)
 
             # Portfolio summary
             st.subheader("Portfolio Summary")
@@ -578,23 +732,24 @@ def main():
                 col1, col2 = st.columns([1, 2])
                 with col1:
                     st.subheader(f"{selected_stock} Details")
-                    st.write(f"**Quantity:** {stock_data.get('Quantity')}")
-                    st.write(f"**Avg. Price:** ₹{stock_data.get('Avg. Price'):,.2f}")
-                    st.write(f"**LTP:** ₹{stock_data.get('LTP'):,.2f}")
-                    st.write(f"**Invested Value:** ₹{stock_data.get('Invested Value'):,.2f}")
-                    st.write(f"**Current Value:** ₹{stock_data.get('Current Value'):,.2f}")
+                    st.write(f"**Quantity:** {stock_data.get('Quantity', 0):,.0f}")
+                    st.write(f"**Avg. Price:** ₹{stock_data.get('Avg. Price', 0):,.2f}")
+                    st.write(f"**LTP:** ₹{stock_data.get('LTP', 0):,.2f}")
+                    st.write(f"**Invested Value:** ₹{stock_data.get('Invested Value', 0):,.2f}")
+                    st.write(f"**Current Value:** ₹{stock_data.get('Current Value', 0):,.2f}")
+                    
+                    # Format profit/loss with proper percentage
                     profit_loss = stock_data.get("Profit/Loss", 0)
                     profit_loss_percent = stock_data.get("Profit/Loss %", 0)
-                    if profit_loss >= 0:
+                    
+                    if pd.notnull(profit_loss) and pd.notnull(profit_loss_percent):
+                        color_class = 'profit' if profit_loss >= 0 else 'loss'
                         st.write(
-                            f"**Profit/Loss:** <span class='profit'>₹{profit_loss:,.2f} ({profit_loss_percent:.2f}%)</span>",
+                            f"**Profit/Loss:** <span class='{color_class}'>₹{profit_loss:,.2f} ({profit_loss_percent:+.2f}%)</span>",
                             unsafe_allow_html=True
                         )
                     else:
-                        st.write(
-                            f"**Profit/Loss:** <span class='loss'>₹{profit_loss:,.2f} ({profit_loss_percent:.2f}%)</span>",
-                            unsafe_allow_html=True
-                        )
+                        st.write("**Profit/Loss:** Data unavailable")
 
                 with col2:
                     st.subheader("AI Analysis")
@@ -632,137 +787,95 @@ def main():
             st.error(f"Error processing file: {str(e)}")
             st.info("Please ensure your CSV has these columns: Name, Quantity, Avg. Price, LTP, Invested Value, Current Value, Profit/Loss, Profit/Loss %, Todays Profit/Loss, Todays Profit/Loss %")
 
-# Add this function after the calculate_buffett_metrics function
-# Add this function to fetch live prices using Gemini
-def fetch_live_prices_with_gemini(stock_symbols):
-    """
-    Use Gemini to fetch live prices for a list of stock symbols
-    """
-    try:
-        # Clean up stock symbols by removing trailing spaces
-        cleaned_symbols = [symbol.strip() for symbol in stock_symbols]
-        
-        # Add proper suffix for Indian stocks if not already present
-        formatted_symbols = []
-        for symbol in cleaned_symbols:
-            if not (symbol.endswith('.NS') or symbol.endswith('.BO')):
-                # Default to NSE for Indian stocks
-                formatted_symbol = f"{symbol.strip()}.NS"
-            else:
-                formatted_symbol = symbol.strip()
-            formatted_symbols.append(formatted_symbol)
-            
-        # Create a prompt for Gemini to fetch live prices
-        symbols_str = ", ".join(formatted_symbols)
-        prompt = f"""
-        Please provide the current live prices for the following stocks: {symbols_str}.
-        Return the data in this exact format - a JSON object where keys are stock symbols and values are their current prices:
-        {{"SYMBOL1": price1, "SYMBOL2": price2, ...}}
-        Only return the JSON object, nothing else.
-        """
-        
-        # Get response from Gemini
-        response = model.generate_content(prompt)
-        response_text = response.text
-        
-        # Extract the JSON object from the response
-        import json
-        import re
-        
-        # Try to find a JSON object in the response
-        json_match = re.search(r'\{[^\{\}]*\}', response_text)
-        if json_match:
-            json_str = json_match.group(0)
-            prices_dict = json.loads(json_str)
-            return prices_dict
-        else:
-            # If no JSON object is found, try to parse the entire response
-            try:
-                prices_dict = json.loads(response_text)
-                return prices_dict
-            except:
-                print("Could not parse Gemini response as JSON")
-                return {}
-    except Exception as e:
-        print(f"Error fetching live prices with Gemini: {str(e)}")
-        return {}
-
-# Modify the track_daily_profits function to use Gemini for live prices
-def track_daily_profits(df, days=30, use_gemini_for_live=True):
-    """Track daily profits for stocks in the portfolio with cumulative trend using Gemini for live prices"""
-    try:
-        # Create a dictionary to store results
-        tracking_data = {}
-        
-        # Get today's date and the date from 'days' days ago
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-        
-        # Get list of stock symbols
-        stock_symbols = df['Name'].tolist()
-        
-        # Fetch live prices using Gemini if requested
-        live_prices = {}
-        if use_gemini_for_live:
-            live_prices = fetch_live_prices_with_gemini(stock_symbols)
-        
-        # Process each stock in the portfolio
-        for _, row in df.iterrows():
-            stock_name = row['Name']
-            avg_price = row['Avg. Price']
-            quantity = row['Quantity']
-            
-            # Format ticker symbol correctly for yfinance
-            ticker_symbol = stock_name.strip()
-            if not (ticker_symbol.endswith('.NS') or ticker_symbol.endswith('.BO')):
-                ticker_symbol = f"{ticker_symbol}.NS"  # Default to NSE
-            
-            # Use yfinance to get historical data
-            try:
-                ticker = yf.Ticker(ticker_symbol)
-                hist = ticker.history(start=start_date, end=end_date)
-                
-                if not hist.empty:
-                    # Update the most recent price with live data from Gemini if available
-                    if use_gemini_for_live and stock_name in live_prices and live_prices[stock_name] is not None:
-                        # Create a copy of the last row
-                        if datetime.now().date() not in hist.index:
-                            last_row = hist.iloc[-1].copy()
-                            new_index = pd.DatetimeIndex([datetime.now()])
-                            new_row = pd.DataFrame([last_row], index=new_index)
-                            hist = pd.concat([hist, new_row])
-                        
-                        # Update the Close price with the live price
-                        hist.loc[hist.index[-1], 'Close'] = live_prices[stock_name]
-                    
-                    # Calculate daily P/L based on closing prices
-                    hist['Daily_PL'] = (hist['Close'] - avg_price) * quantity
-                    hist['Daily_PL_Pct'] = ((hist['Close'] - avg_price) / avg_price) * 100
-                    
-                    # Calculate cumulative P/L (running total throughout the month)
-                    hist['Month'] = hist.index.month
-                    hist['Year'] = hist.index.year
-                    hist['Monthly_Cumulative_PL'] = hist.groupby(['Year', 'Month'])['Daily_PL'].cumsum()
-                    
-                    # Store in our results dictionary
-                    tracking_data[stock_name] = {
-                        'dates': hist.index.tolist(),
-                        'close_prices': hist['Close'].tolist(),
-                        'daily_pl': hist['Daily_PL'].tolist(),
-                        'daily_pl_pct': hist['Daily_PL_Pct'].tolist(),
-                        'monthly_cumulative_pl': hist['Monthly_Cumulative_PL'].tolist(),
-                        'month': hist['Month'].tolist(),
-                        'year': hist['Year'].tolist(),
-                        'live_price': live_prices.get(stock_name, None) if use_gemini_for_live else None
-                    }
-            except Exception as e:
-                print(f"Error fetching data for {stock_name}: {str(e)}")
-                continue
-                
-        return tracking_data
-    except Exception as e:
-        print(f"Error in track_daily_profits: {str(e)}")
-        return {}
-
+# Move the main() function to the end of the file
 if __name__ == "__main__":
     main()
+
+def create_correlation_heatmap(df):
+    """Create an enhanced correlation heatmap using plotly"""
+    try:
+        # Select only relevant numeric columns for correlation
+        numeric_cols = ['Quantity', 'Avg. Price', 'LTP', 'Invested Value', 
+                       'Current Value', 'Profit/Loss', 'Profit/Loss %']
+        correlation_matrix = df[numeric_cols].corr()
+        
+        # Create heatmap with improved styling
+        fig = go.Figure(data=go.Heatmap(
+            z=correlation_matrix,
+            x=numeric_cols,
+            y=numeric_cols,
+            colorscale='RdBu_r',  # Reversed RdBu for better visualization
+            zmin=-1,
+            zmax=1,
+            text=np.round(correlation_matrix, 2),
+            texttemplate='%{text:.2f}',
+            textfont={"size": 12, "color": "black"},
+            hoverongaps=False
+        ))
+        
+        # Update layout with better formatting
+        fig.update_layout(
+            title={
+                'text': 'Portfolio Correlation Matrix',
+                'y':0.95,
+                'x':0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': dict(size=18)
+            },
+            height=700,
+            width=900,
+            xaxis={'side': 'bottom', 'tickangle': 45},
+            yaxis={'autorange': 'reversed'},
+            margin=dict(t=100, l=100, r=50, b=100)
+        )
+        
+        return fig
+    except Exception as e:
+        print(f"Error creating heatmap: {str(e)}")
+        return None
+
+def calculate_mtd_metrics(df: pd.DataFrame) -> dict:
+    """Calculate Month-to-Date metrics with enhanced statistics"""
+    today = datetime.now()
+    month_start = datetime(today.year, today.month, 1)
+    
+    mtd_metrics = {
+        'total_pl': 0,
+        'avg_daily_pl': 0,
+        'winning_days': 0,
+        'losing_days': 0,
+        'best_performer': '',
+        'worst_performer': '',
+        'volatility': 0,
+        'sharpe_ratio': 0
+    }
+    
+    try:
+        # Filter for current month's data
+        mtd_data = df[df.index >= month_start]
+        
+        if not mtd_data.empty:
+            # Calculate basic P&L metrics
+            mtd_metrics['total_pl'] = mtd_data['Profit/Loss'].sum()
+            mtd_metrics['avg_daily_pl'] = mtd_data['Profit/Loss'].mean()
+            mtd_metrics['winning_days'] = len(mtd_data[mtd_data['Profit/Loss'] > 0])
+            mtd_metrics['losing_days'] = len(mtd_data[mtd_data['Profit/Loss'] < 0])
+            
+            # Calculate advanced metrics
+            returns = mtd_data['Profit/Loss %'].pct_change()
+            mtd_metrics['volatility'] = returns.std() * np.sqrt(252)  # Annualized volatility
+            risk_free_rate = 0.05  # Assume 5% risk-free rate
+            excess_returns = returns - risk_free_rate/252
+            mtd_metrics['sharpe_ratio'] = np.sqrt(252) * excess_returns.mean() / returns.std()
+            
+            # Identify best and worst performers
+            performance_by_stock = mtd_data.groupby('Name')['Profit/Loss %'].sum()
+            mtd_metrics['best_performer'] = performance_by_stock.idxmax()
+            mtd_metrics['worst_performer'] = performance_by_stock.idxmin()
+            
+        return mtd_metrics
+    
+    except Exception as e:
+        print(f"Error calculating MTD metrics: {str(e)}")
+        return mtd_metrics
